@@ -1,107 +1,101 @@
-import { Message } from './memory';
-import { getConversation, saveMessage } from './memory';
+import { supabase } from './supabaseClient';
+import { v4 as uuidv4 } from 'uuid';
 
-interface WhatsAppSender {
-  phoneNumber: string;
-  conversationId?: string;
-}
+/**
+ * Ensures a conversation entry exists in the 'conversations' table.
+ * If a similar function exists elsewhere (e.g., in memory.ts), consider refactoring.
+ * @param conversationId The ID of the conversation to ensure.
+ */
+async function ensureConversation(conversationId: string): Promise<void> {
+  try {
+    const { error } = await supabase
+      .from('conversations')
+      .insert({ id: conversationId })
+      .select('id')
+      .single(); // Use single to potentially get the inserted row or null
 
-class ConversationManager {
-  private activeConversations: Map<string, string> = new Map();
+    // .onConflict('id').ignore() is preferred if your Supabase version supports it well.
+    // However, a more explicit check can be done if 'upsert' with 'ignoreDuplicates: true' isn't behaving as expected
+    // or if you need to confirm the existence without causing an error that stops execution.
 
-  // Obtém ou cria um ID de conversa para um número de telefone
-  private async getConversationId(phoneNumber: string): Promise<string> {
-    let conversationId = this.activeConversations.get(phoneNumber);
-    
-    if (!conversationId) {
-      // Tenta encontrar a última conversa do usuário
-      const conversations = await getConversation(undefined, phoneNumber);
-      if (conversations && conversations.length > 0) {
-        conversationId = conversations[0].conversationId;
+    if (error) {
+      // Check if the error is because the conversation already exists (PK violation)
+      // Supabase error codes for unique violations might vary based on underlying PostgreSQL settings.
+      // Common code is '23505' for unique_violation.
+      if (error.code === '23505') {
+        // Conversation already exists, which is fine.
+        console.log(`Conversation ${conversationId} already exists.`);
+      } else {
+        // Another error occurred
+        console.error('Error ensuring conversation in Supabase:', error);
+        throw error; // Re-throw for higher-level handling if necessary
       }
     }
-
-    return conversationId || crypto.randomUUID();
-  }
-
-  // Processa uma mensagem do WhatsApp
-  async processWhatsAppMessage(sender: string, text: string): Promise<string> {
-    try {
-      // Obtém ou cria um ID de conversa para este remetente
-      const conversationId = await this.getConversationId(sender);
-      
-      // Salva a mensagem do usuário
-      await saveMessage({
-        conversationId,
-        role: 'user',
-        content: text,
-        metadata: {
-          source: 'whatsapp',
-          phoneNumber: sender
-        }
-      });
-
-      // Processa a mensagem usando o OpenWebUI
-      const messages = await getConversation(conversationId);
-      const response = await this.getOpenWebUIResponse(messages);
-
-      // Salva a resposta do assistente
-      await saveMessage({
-        conversationId,
-        role: 'assistant',
-        content: response,
-        metadata: {
-          source: 'openwebui',
-          model: process.env.OPEN_WEBUI_MODEL
-        }
-      });
-
-      // Atualiza o mapa de conversas ativas
-      this.activeConversations.set(sender, conversationId);
-
-      return response;
-    } catch (error) {
-      console.error('Error processing WhatsApp message:', error);
-      return 'Desculpe, ocorreu um erro ao processar sua mensagem. Por favor, tente novamente.';
-    }
-  }
-
-  // Obtém resposta do OpenWebUI
-  private async getOpenWebUIResponse(messages: Message[]): Promise<string> {
-    const OPEN_WEBUI_API_URL = process.env.OPEN_WEBUI_API_URL;
-    const MODEL = process.env.OPEN_WEBUI_MODEL;
-    const JWT = process.env.OPEN_WEBUI_JWT;
-
-    if (!OPEN_WEBUI_API_URL) {
-      throw new Error('OPEN_WEBUI_API_URL not configured');
-    }
-
-    const response = await fetch(OPEN_WEBUI_API_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${JWT}`
-      },
-      body: JSON.stringify({
-        model: MODEL,
-        messages: messages.map(({ role, content }) => ({ role, content }))
-      })
-    });
-
-    if (!response.ok) {
-      const text = await response.text();
-      throw new Error(`OpenWebUI API error: ${text}`);
-    }
-
-    const data = await response.json();
-    return data.choices[0].message.content;
-  }
-
-  // Limpa uma conversa ativa
-  clearConversation(phoneNumber: string) {
-    this.activeConversations.delete(phoneNumber);
+  } catch (err) {
+    // Catch any other errors, including network issues or if Supabase client itself throws.
+    console.error('Exception in ensureConversation:', err);
+    // Decide if this should throw or be handled more gracefully depending on application needs.
+    // For now, we log and it might implicitly throw if 'error' above was re-thrown.
   }
 }
 
-// Exporta uma instância singleton
-export const conversationManager = new ConversationManager();
+
+/**
+ * Retrieves or creates a conversation ID for a given WhatsApp sender number.
+ * @param senderNumber The phone number of the WhatsApp sender.
+ * @returns A promise that resolves to the conversation ID.
+ */
+export async function getConversationIdForWhatsapp(senderNumber: string): Promise<string> {
+  const normalizedSenderNumber = senderNumber.replace(/\D/g, '');
+
+  try {
+    // 1. Check for existing mapping
+    let { data: existingMap, error: selectError } = await supabase
+      .from('whatsapp_conversations_map')
+      .select('conversation_id')
+      .eq('sender_number', normalizedSenderNumber)
+      .single();
+
+    if (selectError && selectError.code !== 'PGRST116') { // PGRST116: Row not found
+      console.error('Error fetching conversation map from Supabase:', selectError);
+      throw selectError;
+    }
+
+    if (existingMap) {
+      console.log(`Found existing conversation ID ${existingMap.conversation_id} for ${normalizedSenderNumber}`);
+      // Ensure the conversation still exists in the main table, just in case.
+      await ensureConversation(existingMap.conversation_id);
+      return existingMap.conversation_id;
+    }
+
+    // 2. If no mapping exists, create a new one
+    const newConversationId = uuidv4();
+    console.log(`No existing conversation found for ${normalizedSenderNumber}. Creating new ID: ${newConversationId}`);
+
+    // a. Ensure the conversation exists in the main 'conversations' table
+    await ensureConversation(newConversationId);
+
+    // b. Insert into whatsapp_conversations_map
+    const { error: insertError } = await supabase
+      .from('whatsapp_conversations_map')
+      .insert({
+        sender_number: normalizedSenderNumber,
+        conversation_id: newConversationId,
+      });
+
+    if (insertError) {
+      console.error('Error inserting new conversation map to Supabase:', insertError);
+      throw insertError;
+    }
+
+    console.log(`Successfully created new conversation mapping for ${normalizedSenderNumber} with ID ${newConversationId}`);
+    return newConversationId;
+
+  } catch (error) {
+    console.error(`Failed to get or create conversation ID for ${normalizedSenderNumber}:`, error);
+    // Depending on how you want to handle errors, you might re-throw,
+    // or return a specific error code or default/fallback conversation ID.
+    // For now, re-throwing to let the caller handle it.
+    throw error;
+  }
+}

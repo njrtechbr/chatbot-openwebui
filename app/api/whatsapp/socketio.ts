@@ -1,7 +1,8 @@
 import { io, Socket } from 'socket.io-client';
-import { conversationManager } from '../chat/conversation-manager';
+import { getConversationIdForWhatsapp } from '../chat/conversation-manager';
 import { sendWhatsAppMessage } from './evolutionClient';
 import { WhatsAppWebhookBody } from './types';
+import { processMessage } from '@/app/api/chat/route'; // Added import for processMessage
 
 interface ConnectionUpdate {
   state: 'open' | 'closed' | 'connecting';
@@ -165,7 +166,8 @@ class EvolutionSocketIO {
     console.log('Message content:', text);
 
     try {
-      const response = await processMessage(text);
+      const conversationId = await getConversationIdForWhatsapp(sender); // Added conversationId
+      const response = await processMessage(text, conversationId); // Modified call to processMessage
       console.log('Sending response:', response);
       await sendWhatsAppMessage(sender, response);
     } catch (error) {

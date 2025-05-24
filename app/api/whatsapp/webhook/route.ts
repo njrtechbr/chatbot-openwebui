@@ -3,6 +3,7 @@ import { processMessage } from '@/app/api/chat/route';
 import { sendWhatsAppMessage } from '../evolutionClient';
 import { WhatsAppWebhookBody } from '../types';
 import { evolutionSocket } from '../socketio';
+import { getConversationIdForWhatsapp } from '../../chat/conversation-manager';
 
 export async function POST(request: Request) {
   try {
@@ -37,7 +38,8 @@ export async function POST(request: Request) {
 
       // Process the message using the existing chat handler
       console.log('Processing message through chat handler');
-      const response = await processMessage(text);
+      const conversationId = await getConversationIdForWhatsapp(sender); // Add this line
+      const response = await processMessage(text, conversationId);
       console.log('Chat response:', response);
       
       // Send the response back via WhatsApp
