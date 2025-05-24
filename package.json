@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx startup.ts && next dev --turbopack",
+    "dev": "tsx startup.ts",
     "build": "next build",
     "start": "tsx startup.ts && next start",
     "lint": "next lint",

@@ -1,29 +1,7 @@
 import { io, Socket } from 'socket.io-client';
-import { processMessage } from '../chat/r    this.socket.on('messages.upsert', async (data: MessageUpsertData) => {
-      try {
-        await this.handleIncomingMessage(data);
-      } catch (error) {
-        console.error('Error handling message:', error);
-      }
-    });
-
-    // Listen for connection state updates
-    this.socket.on('connection.update', (update: ConnectionUpdate) => {
-      console.log('WhatsApp connection status:', update.state);
-    });t { sendWhatsAppMessage } from './evolutionClient';
-
-interface WhatsAppMessage {
-  fromMe: boolean;
-  from: string;
-  conversation?: string;
-  extendedTextMessage?: {
-    text: string;
-  };
-}
-
-interface MessageUpsertData {
-  message: WhatsAppMessage;
-}
+import { conversationManager } from '../chat/conversation-manager';
+import { sendWhatsAppMessage } from './evolutionClient';
+import { WhatsAppWebhookBody } from './types';
 
 interface ConnectionUpdate {
   state: 'open' | 'closed' | 'connecting';
@@ -34,15 +12,16 @@ class EvolutionSocketIO {
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 10;
   private isInitialized = false;
+  private reconnecting = false;
 
   constructor() {
-    // Delay initialization to ensure environment variables are loaded
     setTimeout(() => this.initialize(), 1000);
   }
 
   private validateConfig() {
     const required = {
       EVOLUTION_API_URL: process.env.EVOLUTION_API_URL,
+      EVOLUTION_API_KEY: process.env.EVOLUTION_API_KEY,
       EVOLUTION_INSTANCE_NAME: process.env.EVOLUTION_INSTANCE_NAME
     };
 
@@ -68,9 +47,24 @@ class EvolutionSocketIO {
       console.log('Initializing Evolution API Socket.IO connection...');
       console.log('Instance:', instanceName);
       
-      this.socket = io(config.EVOLUTION_API_URL, {
+      // Remove trailing slashes from the URL
+      const baseUrl = (config.EVOLUTION_API_URL as string).replace(/\/+$/, '');
+      console.log('Connecting to Socket.IO URL:', baseUrl);
+      
+      this.socket = io(baseUrl, {
         transports: ['websocket'],
-        path: `/${instanceName}`
+        query: {
+          instance: instanceName,
+        },
+        auth: {
+          apikey: config.EVOLUTION_API_KEY as string
+        },
+        autoConnect: true,
+        reconnection: true,
+        reconnectionDelay: 5000,
+        reconnectionDelayMax: 15000,
+        reconnectionAttempts: this.maxReconnectAttempts,
+        timeout: 20000
       });
 
       this.setupEventListeners();
@@ -85,50 +79,76 @@ class EvolutionSocketIO {
     this.socket.on('connect', () => {
       console.log('Connected to Evolution API Socket.IO');
       this.reconnectAttempts = 0;
+      this.reconnecting = false;
     });
 
-    this.socket.on('disconnect', () => {
-      console.log('Disconnected from Evolution API Socket.IO');
-    });
-
-    this.socket.on('error', (error: Error) => {
-      console.error('Socket.IO error:', error);
-    });
-
-    // Listen for WhatsApp messages
-    this.socket.on('messages.upsert', async (data: MessageUpsertData) => {
-      try {
-        await this.handleIncomingMessage(data);
-      } catch (error) {
-        console.error('Error handling message:', error);
+    this.socket.on('disconnect', (reason) => {
+      console.log('Disconnected from Evolution API Socket.IO:', reason);
+      if (!this.reconnecting) {
+        this.reconnecting = true;
+        this.tryReconnect();
       }
     });
 
-    // Listen for connection state updates
-    this.socket.on('connection.update', (update: ConnectionUpdate) => {
-      console.log('WhatsApp connection status:', update?.state);
+    this.socket.on('connect_error', (error) => {
+      console.error('Socket.IO connection error:', error);
+      if (!this.reconnecting) {
+        this.reconnecting = true;
+        this.tryReconnect();
+      }
     });
 
-    // Handle reconnection
-    this.socket.io.on('reconnect_attempt', (attempt: number) => {
-      this.reconnectAttempts = attempt;
-      console.log(`Reconnection attempt ${attempt}/${this.maxReconnectAttempts}`);
-      
-      if (attempt > this.maxReconnectAttempts) {
-        console.error('Max reconnection attempts reached');
-        this.socket?.disconnect();
-      }
+    // Listen for WhatsApp status events
+    this.socket.on('connection.update', (update: any) => {
+      console.log('WhatsApp connection status update:', update);
+    });
+
+    this.socket.on('qr', (qr: any) => {
+      console.log('New QR Code received:', qr);
+    });
+
+    this.socket.on('ready', () => {
+      console.log('WhatsApp is ready!');
+    });
+
+    // Listen for message events
+    ['message.create', 'messages.upsert'].forEach(eventName => {
+      this.socket?.on(eventName, async (data: any) => {
+        console.log(`Received ${eventName} event:`, data);
+        try {
+          let message = data?.message || (data?.messages && data.messages[0]);
+          if (message) {
+            await this.handleIncomingMessage(message);
+          }
+        } catch (error) {
+          console.error(`Error handling ${eventName}:`, error);
+        }
+      });
+    });
+
+    // Debug all events
+    this.socket.onAny((event, ...args) => {
+      console.log('Socket.IO event:', event, args);
     });
   }
 
-  private async handleIncomingMessage(data: MessageUpsertData) {
-    const message = data?.message;
-    if (!message) {
-      console.log('No message in event:', data);
+  private tryReconnect() {
+    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+      console.error('Max reconnection attempts reached');
       return;
     }
 
-    // Ignore messages from the bot itself
+    this.reconnectAttempts++;
+    console.log(`Reconnection attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts}`);
+    
+    setTimeout(() => {
+      if (this.socket?.connected) return;
+      console.log('Attempting to reconnect...');
+      this.socket?.connect();
+    }, 5000 * Math.pow(1.5, this.reconnectAttempts - 1));
+  }
+
+  private async handleIncomingMessage(message: any) {
     if (message.fromMe) {
       console.log('Ignoring own message');
       return;
