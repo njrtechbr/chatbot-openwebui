@@ -43,23 +43,50 @@ async function startServices() {
       process.env.SUPABASE_ANON_KEY!
     );
     
-    // Verificar se as tabelas existem
-    const { error: conversationsError } = await supabase.from('conversations').select('count');
+    // Check and create 'conversations' table
+    const { error: conversationsError } = await supabase.from('conversations').select('count', { head: true });
     if (conversationsError) {
-      // Se as tabelas não existem, criar usando o schema
-      const schemaSQL = await fs.readFile('./supabase_schema.sql', 'utf8');
-      const { error: createError } = await supabase.rpc('exec_sql', { sql: schemaSQL });
-      if (createError) {
-        console.warn('⚠️ Could not auto-create tables:', createError.message);
-        console.log('ℹ️ Please run the SQL schema manually in your Supabase dashboard');
-      } else {
-        console.log('📦 Created Supabase tables from schema');
+      console.log("Table 'conversations' not found or error accessing it. Attempting to create...");
+      try {
+        const schemaSQL = await fs.readFile('./supabase_schema.sql', 'utf8');
+        const { error: createError } = await supabase.rpc('exec_sql', { sql: schemaSQL });
+        if (createError) {
+          console.warn('⚠️ Could not auto-create tables from supabase_schema.sql:', createError.message);
+          console.log('ℹ️ Please run the SQL schema manually in your Supabase dashboard if issues persist.');
+        } else {
+          console.log('📦 Created Supabase tables from supabase_schema.sql');
+        }
+      } catch (readError: any) {
+        console.warn('⚠️ Could not read supabase_schema.sql:', readError.message);
       }
+    } else {
+      console.log("✅ Table 'conversations' found.");
+    }
+
+    // Check and create 'whatsapp_conversations_map' table
+    const { error: whatsappMapError } = await supabase.from('whatsapp_conversations_map').select('count', { head: true });
+    if (whatsappMapError) {
+      console.log("Table 'whatsapp_conversations_map' not found or error accessing it. Attempting to create...");
+      try {
+        const updateSchemaSQL = await fs.readFile('./supabase_update_schema.sql', 'utf8');
+        const { error: createMapError } = await supabase.rpc('exec_sql', { sql: updateSchemaSQL });
+        if (createMapError) {
+          console.warn('⚠️ Could not auto-create table from supabase_update_schema.sql:', createMapError.message);
+          console.log('ℹ️ Please run the SQL schema manually in your Supabase dashboard if issues persist.');
+        } else {
+          console.log('📦 Created Supabase table from supabase_update_schema.sql (whatsapp_conversations_map).');
+        }
+      } catch (readError: any) {
+        console.warn('⚠️ Could not read supabase_update_schema.sql:', readError.message);
+      }
+    } else {
+      console.log("✅ Table 'whatsapp_conversations_map' found.");
     }
     
-    console.log('✅ Supabase connection established');
-  } catch (error) {
-    console.error('❌ Failed to connect to Supabase:', error);
+    console.log('✅ Supabase connection established and initial schema checks complete.');
+
+  } catch (error: any) {
+    console.error('❌ Failed to connect to Supabase or perform initial schema setup:', error.message);
   }
 
   // 2. Verificar OpenWebUI API
