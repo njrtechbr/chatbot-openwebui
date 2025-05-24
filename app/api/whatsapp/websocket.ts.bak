@@ -1,0 +1,140 @@
+import WebSocket from 'ws';
+import { processMessage } from '../chat/route';
+import { sendWhatsAppMessage } from './evolutionClient';
+
+class EvolutionWebSocket {
+  private ws: WebSocket | null = null;
+  private reconnectAttempts = 0;
+  private maxReconnectAttempts = 10;
+  private reconnectDelay = 5000; // 5 seconds
+  private isInitialized = false;
+
+  constructor() {
+    // Delay initialization to ensure environment variables are loaded
+    setTimeout(() => {
+      if (!this.isInitialized) {
+        this.initialize();
+      }
+    }, 1000);
+  }
+
+  private initialize() {
+    this.isInitialized = true;
+    this.connect();
+  }
+
+  private connect() {
+    if (!process.env.EVOLUTION_API_URL) {
+      console.error('EVOLUTION_API_URL not configured');
+      return;
+    }
+
+    const wsUrl = process.env.EVOLUTION_API_URL.replace(/^http/, 'ws').replace(/\/$/, '') + '/evolution';
+    console.log('Connecting to Evolution API WebSocket:', wsUrl);
+
+    try {
+      this.ws = new WebSocket(wsUrl, {
+        headers: {
+          'apikey': process.env.EVOLUTION_API_KEY || ''
+        }
+      });
+
+    this.ws.on('open', () => {
+      console.log('Connected to Evolution API WebSocket');
+      this.reconnectAttempts = 0;
+      
+      // Subscribe to instance events
+      if (this.ws?.readyState === WebSocket.OPEN) {
+        this.ws.send(JSON.stringify({
+          action: 'subscribe',
+          instance: process.env.EVOLUTION_INSTANCE_NAME
+        }));
+      }
+    });
+
+    this.ws.on('message', async (data) => {
+      try {
+        const event = JSON.parse(data.toString());
+        await this.handleWebSocketMessage(event);
+      } catch (error) {
+        console.error('Error handling WebSocket message:', error);
+      }
+    });
+
+    this.ws.on('close', () => {
+      console.log('WebSocket connection closed');
+      this.attemptReconnect();
+    });
+
+    this.ws.on('error', (error) => {
+      console.error('WebSocket error:', error);
+      this.attemptReconnect();
+    });
+  }
+
+  private attemptReconnect() {
+    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+      console.error('Max reconnection attempts reached');
+      return;
+    }
+
+    this.reconnectAttempts++;
+    console.log(`Attempting to reconnect (${this.reconnectAttempts}/${this.maxReconnectAttempts})...`);
+    
+    setTimeout(() => {
+      this.connect();
+    }, this.reconnectDelay);
+  }
+
+  private async handleWebSocketMessage(event: any) {
+    console.log('Received WebSocket event:', event?.type);
+    
+    // Handle connection events
+    if (event.type === 'connection.update') {
+      console.log('Connection status:', event.state);
+      return;
+    }
+    
+    // Handle messages.upsert event
+    if (event.type === 'messages.upsert') {
+      const message = event.data?.message;
+      if (!message) {
+        console.log('No message in event:', event);
+        return;
+      }
+      
+      // Ignore messages from the bot itself
+      if (message.fromMe) {
+        console.log('Ignoring own message');
+        return;
+      }
+
+      // Get the message text
+      const text = message.conversation || message.extendedTextMessage?.text;
+      if (!text) return;
+
+      // Get the sender's phone number
+      const sender = message.from;
+
+      console.log('Received message from:', sender);
+      console.log('Message content:', text);
+
+      try {
+        // Process the message using our chat handler
+        const response = await processMessage(text);
+        
+        // Send the response back via WhatsApp
+        await sendWhatsAppMessage(sender, response);
+      } catch (error) {
+        console.error('Error processing message:', error);
+      }
+    }
+  }
+
+  public isConnected(): boolean {
+    return this.ws?.readyState === WebSocket.OPEN;
+  }
+}
+
+// Export a singleton instance
+export const evolutionWs = new EvolutionWebSocket();

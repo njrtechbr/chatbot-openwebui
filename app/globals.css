@@ -30,9 +30,76 @@ body {
   margin: 0;
 }
 
+/* Touch Optimizations */
+* {
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+/* Prevent text selection on interactive elements */
+.header,
+.inputContainer,
+.sendButton,
+.messageTime {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Prevent elastic scrolling on iOS */
+html {
+  position: fixed;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  width: 100%;
+  height: 100%;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
 a {
   color: inherit;
   text-decoration: none;
+}
+
+/* Desktop optimizations */
+@media (min-width: 769px) {
+  body {
+    background: #dadbd3;
+    overflow: hidden;
+  }
+
+  .page {
+    background: #dadbd3;
+  }
+  
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(0, 0, 0, 0.2) transparent;
+  }
+
+  *::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    background-color: rgba(0, 0, 0, 0.2);
+    border-radius: 3px;
+  }
+}
+
+/* Better font rendering */
+body {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
 
 @media (prefers-color-scheme: dark) {

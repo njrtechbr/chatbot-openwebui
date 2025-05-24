@@ -2,21 +2,37 @@
   "name": "chatbot-openwebui",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "scripts": {
-    "dev": "next dev --turbopack",
+    "dev": "tsx startup.ts && next dev --turbopack",
     "build": "next build",
-    "start": "next start",
-    "lint": "next lint"
+    "start": "tsx startup.ts && next start",
+    "lint": "next lint",
+    "test:ws": "tsx test-evolution-ws.ts",
+    "test:webhook": "NODE_OPTIONS='--experimental-fetch' tsx --tsconfig tsconfig.test.json test-whatsapp-webhook.ts"
   },
   "dependencies": {
+    "@supabase/postgrest-js": "^1.19.4",
+    "@supabase/supabase-js": "^2.49.8",
+    "@types/ws": "^8.18.1",
+    "axios": "^1.9.0",
+    "cross-fetch": "^4.1.0",
+    "dotenv": "^16.5.0",
+    "lowdb": "^7.0.1",
+    "next": "15.1.8",
+    "node-fetch": "^3.3.2",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "next": "15.1.8"
+    "socket.io-client": "^4.8.1",
+    "uuid": "^11.1.0",
+    "ws": "^8.18.2"
   },
   "devDependencies": {
-    "typescript": "^5",
     "@types/node": "^20",
     "@types/react": "^19",
-    "@types/react-dom": "^19"
+    "@types/react-dom": "^19",
+    "@types/uuid": "^10.0.0",
+    "tsx": "^4.19.4",
+    "typescript": "^5"
   }
 }
